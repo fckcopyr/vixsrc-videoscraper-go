@@ -1,2 +1,1 @@
-# vixsrc-extractor-go
-
+# vixsrc-videoscraper-go
