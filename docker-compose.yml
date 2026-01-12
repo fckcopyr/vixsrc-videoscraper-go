@@ -1,4 +1,3 @@
-
 services:
   vixsrc-extractor:
     build:
@@ -8,4 +7,5 @@ services:
     restart: unless-stopped
     environment:
       - GIN_MODE=release
-
+    expose:
+      - "5000" # vedere discordo rete nginx
