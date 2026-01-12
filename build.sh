@@ -1,1 +1,1 @@
-go build -ldflags="-s -w" -o vixsrc-extractor-server.out
+go build -ldflags="-s -w" -o server.out

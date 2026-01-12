@@ -1,0 +1,11 @@
+
+services:
+  vixsrc-extractor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vixsrc-extractor-docker
+    restart: unless-stopped
+    environment:
+      - GIN_MODE=release
+

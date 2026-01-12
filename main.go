@@ -310,6 +310,53 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 		if err != nil {
 			return "", err
 		}
+	} else if strings.Contains(inputURL, "embed") {
+		// Handle embed URLs with parameters already in URL
+		// Example: https://vixcloud.co/embed/69201?token=...&expires=...&canPlayFHD=1
+		parsedURL, err := url.Parse(inputURL)
+		if err != nil {
+			return "", err
+		}
+
+		query := parsedURL.Query()
+		urlToken := query.Get("token")
+		urlExpires := query.Get("expires")
+		canPlayFHD := query.Get("canPlayFHD")
+
+		if urlToken != "" && urlExpires != "" {
+			// Parameters already in URL, just fetch page to get server URL
+			response, err = makeRequest(ctx, inputURL, nil)
+			if err != nil {
+				return "", err
+			}
+
+			// Extract only server URL from response
+			if matches := serverURLRegex.FindStringSubmatch(response); len(matches) > 1 {
+				serverURL := matches[1]
+
+				// Build manifest URL with parameters from URL
+				var manifestURL string
+				if strings.Contains(serverURL, "?b=1") {
+					manifestURL = fmt.Sprintf("%s&token=%s&expires=%s", serverURL, urlToken, urlExpires)
+				} else {
+					manifestURL = fmt.Sprintf("%s?token=%s&expires=%s", serverURL, urlToken, urlExpires)
+				}
+
+				// Add quality parameter if available in URL
+				if canPlayFHD == "1" {
+					manifestURL += "&h=1"
+				}
+
+				return manifestURL, nil
+			}
+			return "", fmt.Errorf("server URL not found in embed page")
+		}
+
+		// If no parameters in URL, fetch the page normally and continue with normal flow
+		response, err = makeRequest(ctx, inputURL, nil)
+		if err != nil {
+			return "", err
+		}
 	} else {
 		return "", fmt.Errorf("unsupported URL format")
 	}
