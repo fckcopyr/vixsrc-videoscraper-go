@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 var (
@@ -529,6 +531,15 @@ func getSecondaryManifest(c *gin.Context) {
 }
 
 func main() {
+	// Load .env file if it exists
+	_ = godotenv.Load()
+
+	NGINX_PROXY_BASE = os.Getenv("NGINX_PROXY_BASE")
+	USER_AGENT = os.Getenv("USER_AGENT")
+	if USER_AGENT == "" {
+		USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	}
+
 	// Set Gin to release mode for better performance
 	gin.SetMode(gin.ReleaseMode)
 
