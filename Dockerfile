@@ -28,9 +28,11 @@ RUN apk --no-cache add ca-certificates
 
 # Copy the binary from builder
 COPY --from=builder /app/server.out .
+# Copy .env file if it exists
+COPY --from=builder /app/.env* ./
 
-# Expose the port (default 8080 for Gin)
-EXPOSE 8080
+# Expose the port (default 5000 for Gin according to main.go)
+EXPOSE 5000
 
 # Run the binary
 CMD ["./server.out"]
