@@ -257,13 +257,10 @@ func processSecondaryManifestLine(line, baseURL string) string {
 // Extract manifest URL from VixCloud page
 func extractVixCloudManifest(ctx context.Context, inputURL string) (string, error) {
 	var response string
-	var err error
 
 	if strings.Contains(inputURL, "iframe") {
-		// Handle iframe URLs
 		siteURL := strings.Split(inputURL, "/iframe")[0]
 
-		// Get version in parallel with iframe request preparation
 		var version string
 		var wg sync.WaitGroup
 		var versionErr error
@@ -280,7 +277,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 			return "", versionErr
 		}
 
-		// Get iframe content
 		headers := map[string]string{
 			"x-inertia":         "true",
 			"x-inertia-version": version,
@@ -291,7 +287,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 			return "", err
 		}
 
-		// Extract iframe src
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(iframeResponse))
 		if err != nil {
 			return "", err
@@ -307,14 +302,46 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 			return "", err
 		}
 
-	} else if strings.Contains(inputURL, "movie") || strings.Contains(inputURL, "tv") {
-		response, err = makeRequest(ctx, inputURL, nil)
+	} else if strings.Contains(inputURL, "/movie/") || strings.Contains(inputURL, "/tv/") {
+		parsedInput, _ := url.Parse(inputURL)
+		parts := strings.Split(strings.TrimRight(parsedInput.Path, "/"), "/")
+
+		var apiURL string
+		if strings.Contains(inputURL, "/tv/") {
+			if len(parts) < 5 {
+				return "", fmt.Errorf("tv URL must include id, season and episode: /tv/{id}/{season}/{episode}")
+			}
+			id := parts[2]
+			season := parts[3]
+			episode := parts[4]
+			apiURL = fmt.Sprintf("https://vixsrc.to/api/tv/%s/%s/%s", id, season, episode)
+		} else {
+			id := parts[len(parts)-1]
+			apiURL = fmt.Sprintf("https://vixsrc.to/api/movie/%s", id)
+		}
+
+		apiResponse, err := makeRequest(ctx, apiURL, map[string]string{
+			"Accept":  "application/json",
+			"Referer": "https://vixsrc.to/",
+		})
 		if err != nil {
 			return "", err
 		}
+
+		var result struct {
+			Src string `json:"src"`
+		}
+		if err := json.Unmarshal([]byte(apiResponse), &result); err != nil {
+			return "", fmt.Errorf("failed to parse API response: %w", err)
+		}
+		if result.Src == "" {
+			return "", fmt.Errorf("empty src in API response")
+		}
+
+		embedURL := "https://vixsrc.to" + result.Src
+		return extractVixCloudManifest(ctx, embedURL)
+
 	} else if strings.Contains(inputURL, "embed") {
-		// Handle embed URLs with parameters already in URL
-		// Example: https://vixcloud.co/embed/69201?token=...&expires=...&canPlayFHD=1
 		parsedURL, err := url.Parse(inputURL)
 		if err != nil {
 			return "", err
@@ -326,17 +353,14 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 		canPlayFHD := query.Get("canPlayFHD")
 
 		if urlToken != "" && urlExpires != "" {
-			// Parameters already in URL, just fetch page to get server URL
 			response, err = makeRequest(ctx, inputURL, nil)
 			if err != nil {
 				return "", err
 			}
 
-			// Extract only server URL from response
 			if matches := serverURLRegex.FindStringSubmatch(response); len(matches) > 1 {
 				serverURL := matches[1]
 
-				// Build manifest URL with parameters from URL
 				var manifestURL string
 				if strings.Contains(serverURL, "?b=1") {
 					manifestURL = fmt.Sprintf("%s&token=%s&expires=%s", serverURL, urlToken, urlExpires)
@@ -344,7 +368,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 					manifestURL = fmt.Sprintf("%s?token=%s&expires=%s", serverURL, urlToken, urlExpires)
 				}
 
-				// Add quality parameter if available in URL
 				if canPlayFHD == "1" {
 					manifestURL += "&h=1"
 				}
@@ -354,7 +377,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 			return "", fmt.Errorf("server URL not found in embed page")
 		}
 
-		// If no parameters in URL, fetch the page normally and continue with normal flow
 		response, err = makeRequest(ctx, inputURL, nil)
 		if err != nil {
 			return "", err
@@ -363,7 +385,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 		return "", fmt.Errorf("unsupported URL format")
 	}
 
-	// Extract manifest URL from script - parallel regex matching
 	var token, expires, serverURL string
 	var tokenErr, expiresErr, serverErr error
 	var wg sync.WaitGroup
@@ -409,7 +430,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 		return "", serverErr
 	}
 
-	// Build manifest URL
 	var manifestURL string
 	if strings.Contains(serverURL, "?b=1") {
 		manifestURL = fmt.Sprintf("%s&token=%s&expires=%s", serverURL, token, expires)
@@ -417,7 +437,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (string, erro
 		manifestURL = fmt.Sprintf("%s?token=%s&expires=%s", serverURL, token, expires)
 	}
 
-	// Add quality parameter if available
 	if strings.Contains(response, "window.canPlayFHD = true") {
 		manifestURL += "&h=1"
 	}
