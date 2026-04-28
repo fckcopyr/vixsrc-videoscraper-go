@@ -543,7 +543,6 @@ func proxyGeneric(c *gin.Context) {
 	req.Header.Set("User-Agent", USER_AGENT)
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "it,en-US;q=0.9,en;q=0.8")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
 	req.Header.Set("Origin", "https://vixsrc.to")
 	req.Header.Set("Referer", "https://vixsrc.to/")
 	req.Header.Set("Connection", "keep-alive")
