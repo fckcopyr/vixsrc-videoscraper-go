@@ -534,23 +534,32 @@ func proxyGeneric(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), REQUEST_TIMEOUT)
 	defer cancel()
 
-	headers := map[string]string{
-		"Accept":         "*/*",
-		"Referer":        "https://vixsrc.to/",
-		"Origin":         "https://vixsrc.to",
-		"Sec-Fetch-Dest": "empty",
-		"Sec-Fetch-Mode": "cors",
-		"Sec-Fetch-Site": "cross-site",
+	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
 	}
 
-	resp, err := makeRequestRaw(ctx, targetURL, headers)
+	req.Header.Set("User-Agent", USER_AGENT)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "it,en-US;q=0.9,en;q=0.8")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	req.Header.Set("Origin", "https://vixsrc.to")
+	req.Header.Set("Referer", "https://vixsrc.to/")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.Header.Set("DNT", "1")
+	req.Header.Set("Sec-GPC", "1")
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
-	// Propaga il Content-Type originale, con fallback sensati per HLS
 	ct := resp.Header.Get("Content-Type")
 	lower := strings.ToLower(targetURL)
 	if ct == "" {
