@@ -649,6 +649,27 @@ func main() {
 	r.GET("/proxy", proxyGeneric)
 	r.GET("/storage/enc.key", proxyEncKey)
 
+	r.GET("/debug/ip", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), REQUEST_TIMEOUT)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, "GET", "https://api.ipify.org?format=json", nil)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		c.Data(http.StatusOK, "application/json", body)
+	})
+
 	fmt.Println("Server starting on :5000")
 	if err := r.Run(":5000"); err != nil {
 		panic(err)
