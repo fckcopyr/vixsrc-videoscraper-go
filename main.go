@@ -49,6 +49,8 @@ type ManifestInfo struct {
 	Referer string
 }
 
+
+
 // makeRequest esegue una GET con headers personalizzate
 func makeRequest(ctx context.Context, reqUrl string, headers map[string]string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", reqUrl, nil)
@@ -539,8 +541,10 @@ func getSecondaryManifest(c *gin.Context) {
 }
 
 func init() {
-	// Inizializza httpClient con CookieJar per mantenere eventuali cookie di sessione
 	jar, _ := cookiejar.New(nil)
+
+	warpProxyURL, _ := url.Parse("http://warp:1080")
+
 	httpClient = &http.Client{
 		Timeout: REQUEST_TIMEOUT,
 		Jar:     jar,
@@ -548,6 +552,7 @@ func init() {
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
+			Proxy:               http.ProxyURL(warpProxyURL),
 		},
 	}
 }
