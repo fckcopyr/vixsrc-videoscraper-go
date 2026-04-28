@@ -15,5 +15,3 @@ services:
       - web
     mem_limit: 512m
     cpus: 1.0
-    ports:
-      - "5000:5000"
