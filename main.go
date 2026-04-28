@@ -50,8 +50,6 @@ type ManifestInfo struct {
 	Referer string
 }
 
-
-
 // makeRequest esegue una GET con headers personalizzate
 func makeRequest(ctx context.Context, reqUrl string, headers map[string]string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", reqUrl, nil)
