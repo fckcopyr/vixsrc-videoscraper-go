@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -77,7 +78,7 @@ func makeRequest(ctx context.Context, reqUrl string, headers map[string]string) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("Errore HTTP %d per l'URL: %s", resp.StatusCode, reqUrl)
+		return "", fmt.Errorf("errore HTTP %d per l'URL: %s", resp.StatusCode, reqUrl)
 	}
 
 	// Go decomprime automaticamente gzip quando Accept-Encoding è gestito da Go.
@@ -296,10 +297,6 @@ func getVixCloudVersion(ctx context.Context, siteURL string) (string, error) {
 }
 
 // extractVixCloudManifest estrae l'URL del manifest e il referer corretto dalla pagina VixCloud.
-// Il flusso replicato è:
-//  1. GET /api/movie/{id}  →  ottieni src (embed URL con token, t, expires, ecc.)
-//  2. GET /embed/...       →  scarica la pagina embed come iframe (Referer: vixsrc.to/)
-//  3. GET /playlist/...    →  scarica il manifest (Referer: embed URL completo, same-origin)
 func extractVixCloudManifest(ctx context.Context, inputURL string) (*ManifestInfo, error) {
 
 	// ── Ramo 1: URL con /iframe → sito VixCloud con Inertia ──────────────────
@@ -336,7 +333,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (*ManifestInf
 			return nil, fmt.Errorf("iframe not found")
 		}
 
-		// L'iframe src è un embed VixCloud: chiamata ricorsiva
 		return extractVixCloudManifest(ctx, iframeSrc)
 	}
 
@@ -359,7 +355,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (*ManifestInf
 			apiURL = fmt.Sprintf("https://vixsrc.to/api/movie/%s", id)
 		}
 
-		// Replica esatta della request del browser al API
 		apiResponse, err := makeRequest(ctx, apiURL, map[string]string{
 			"Accept":         "application/json, text/plain, */*",
 			"Referer":        fmt.Sprintf("https://vixsrc.to%s", parsedInput.Path),
@@ -382,10 +377,7 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (*ManifestInf
 			return nil, fmt.Errorf("empty src in API response")
 		}
 
-		// result.Src è tipo "/embed/597288?token=...&t=...&expires=...&lang=en&skin=vixsrc&canPlayFHD=1"
 		embedURL := "https://vixsrc.to" + result.Src
-
-		// Chiamata ricorsiva: ora viene gestito dal ramo /embed/
 		return extractVixCloudManifest(ctx, embedURL)
 	}
 
@@ -400,7 +392,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (*ManifestInf
 		canPlayFHD := query.Get("canPlayFHD")
 		lang := query.Get("lang")
 
-		// ── Step 2: GET /embed/... come se fosse un iframe navigato ──────────
 		embedHeaders := map[string]string{
 			"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 			"Referer":                   "https://vixsrc.to/",
@@ -416,8 +407,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (*ManifestInf
 			return nil, fmt.Errorf("errore nel caricare la pagina embed: %w", err)
 		}
 
-		// ── Estrazione token, expires, serverURL dalla pagina embed ────────────
-		// IMPORTANTE: NON usare i token/expires presenti nell'URL embed (quelli sono per l'embed, non per il playlist)
 		tokenMatches := tokenRegex.FindStringSubmatch(embedPageContent)
 		if len(tokenMatches) < 2 {
 			return nil, fmt.Errorf("token not found in embed page")
@@ -436,7 +425,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (*ManifestInf
 		}
 		serverURL := serverMatches[1]
 
-		// ── Costruzione URL manifest ─────────────────────────────────────────
 		var manifestURL string
 		if strings.Contains(serverURL, "?b=1") {
 			manifestURL = fmt.Sprintf("%s&token=%s&expires=%s", serverURL, token, expires)
@@ -451,7 +439,6 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (*ManifestInf
 			manifestURL += "&lang=" + url.QueryEscape(lang)
 		}
 
-		// Il referer per la GET al /playlist/ deve essere l'embed URL COMPLETO (con il token embed originale)
 		return &ManifestInfo{
 			URL:     manifestURL,
 			Referer: inputURL,
@@ -460,6 +447,8 @@ func extractVixCloudManifest(ctx context.Context, inputURL string) (*ManifestInf
 
 	return nil, fmt.Errorf("unsupported URL format: %s", inputURL)
 }
+
+// ── HANDLER ─────────────────────────────────────────────────────────────────
 
 // getManifest gestisce il manifest principale (primo livello playlist)
 func getManifest(c *gin.Context) {
@@ -472,14 +461,12 @@ func getManifest(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), REQUEST_TIMEOUT)
 	defer cancel()
 
-	// Estrai manifest info (URL + Referer)
 	info, err := extractVixCloudManifest(ctx, inputURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// ── GET /playlist/... con gli header esatti del curl funzionante ─────────
 	manifestHeaders := map[string]string{
 		"Accept":          "*/*",
 		"Accept-Encoding": "gzip, deflate, br, zstd",
@@ -490,7 +477,6 @@ func getManifest(c *gin.Context) {
 		"Sec-Fetch-Mode":  "cors",
 		"Sec-Fetch-Site":  "same-origin",
 		"TE":              "trailers",
-		// NOTA: NON inviare header "Origin" – il curl non lo invia
 	}
 
 	manifestContent, err := makeRequest(ctx, info.URL, manifestHeaders)
@@ -499,7 +485,6 @@ func getManifest(c *gin.Context) {
 		return
 	}
 
-	// Riscrivi le URL del manifest principale (punta al secondary endpoint)
 	rewrittenManifest := rewriteMainManifest(manifestContent, info.URL)
 
 	c.Header("Content-Type", "application/vnd.apple.mpegurl")
@@ -517,7 +502,6 @@ func getSecondaryManifest(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), REQUEST_TIMEOUT)
 	defer cancel()
 
-	// Il manifest secondario è ospitato su CDN di terze parti → cross-site
 	headers := map[string]string{
 		"Accept":         "*/*",
 		"Referer":        "https://vixsrc.to/",
@@ -533,12 +517,102 @@ func getSecondaryManifest(c *gin.Context) {
 		return
 	}
 
-	// Riscrivi le URL del manifest secondario (punta i segmenti al proxy nginx)
 	rewrittenManifest := rewriteSecondaryManifest(manifestContent, targetURL)
 
 	c.Header("Content-Type", "application/vnd.apple.mpegurl")
 	c.String(http.StatusOK, rewrittenManifest)
 }
+
+// proxyHandler è l'equivalente Go del location /proxy/ di Nginx.
+func proxyHandler(c *gin.Context) {
+	// Gestione preflight CORS
+	if c.Request.Method == http.MethodOptions {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "*")
+		c.Header("Access-Control-Max-Age", "86400")
+		c.AbortWithStatus(http.StatusNoContent)
+		return
+	}
+
+	targetURL := c.Query("url")
+	if targetURL == "" {
+		c.String(http.StatusBadRequest, "Missing 'url' parameter")
+		return
+	}
+
+	// Decodifica URL (in caso sia già escapato)
+	targetURL, err := url.QueryUnescape(targetURL)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid url parameter")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Cannot create proxy request")
+		return
+	}
+
+	// Intestazioni essenziali per lo streaming
+	req.Header.Set("User-Agent", USER_AGENT)
+	req.Header.Set("Accept", c.Request.Header.Get("Accept"))
+	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	req.Header.Set("Range", c.Request.Header.Get("Range"))
+
+	if origin := c.Request.Header.Get("Origin"); origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+
+	// Usa l'httpClient con proxy WARP già configurato
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		c.String(http.StatusBadGateway, "Upstream proxy error")
+		return
+	}
+	defer resp.Body.Close()
+
+	// Rimuovi header CORS dell'upstream (verranno sostituiti)
+	delete(resp.Header, "Access-Control-Allow-Origin")
+	delete(resp.Header, "Access-Control-Allow-Methods")
+	delete(resp.Header, "Access-Control-Allow-Headers")
+	delete(resp.Header, "Access-Control-Allow-Credentials")
+
+	// Copia gli header della risposta
+	for key, values := range resp.Header {
+		for _, value := range values {
+			c.Header(key, value)
+		}
+	}
+
+	// Aggiungi header CORS propri
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
+	c.Header("Access-Control-Allow-Headers", "*")
+
+	// Forza Content-Type per tipi HLS comuni
+	ext := filepath.Ext(targetURL)
+	switch ext {
+	case ".m3u8":
+		c.Header("Content-Type", "application/vnd.apple.mpegurl")
+	case ".ts":
+		c.Header("Content-Type", "video/mp2t")
+	case ".vtt":
+		c.Header("Content-Type", "text/vtt")
+	}
+
+	c.Status(resp.StatusCode)
+	_, err = io.Copy(c.Writer, resp.Body)
+	if err != nil {
+		// il client potrebbe aver chiuso la connessione, ignoriamo
+		_ = err
+	}
+}
+
+// ── INIT / MAIN ─────────────────────────────────────────────────────────────
 
 func init() {
 	jar, _ := cookiejar.New(nil)
@@ -577,6 +651,7 @@ func main() {
 
 	r.GET("/api/v1/vixcloud/manifest", getManifest)
 	r.GET("/api/v1/vixcloud/secondary", getSecondaryManifest)
+	r.Any("/api/v1/vixcloud/proxy", proxyHandler)
 
 	fmt.Println("Server starting on :5000")
 	if err := r.Run(":5000"); err != nil {
